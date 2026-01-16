@@ -26,6 +26,7 @@
 #include "iceberg/util/macros.h"
 #include "iceberg/util/snapshot_util_internal.h"
 #include "iceberg/util/timepoint.h"
+#include "iceberg/util/uuid.h"
 
 namespace iceberg {
 
@@ -42,6 +43,14 @@ Result<std::vector<std::shared_ptr<Snapshot>>> SnapshotUtil::AncestorsOf(
     const Table& table, int64_t snapshot_id) {
   return table.SnapshotById(snapshot_id).and_then([&table](const auto& snapshot) {
     return AncestorsOf(table, snapshot);
+  });
+}
+
+Result<std::vector<std::shared_ptr<Snapshot>>> SnapshotUtil::AncestorsOf(
+    int64_t snapshot_id,
+    const std::function<Result<std::shared_ptr<Snapshot>>(int64_t)>& lookup) {
+  return lookup(snapshot_id).and_then([&lookup](const auto& snapshot) {
+    return AncestorsOf(snapshot, lookup);
   });
 }
 
@@ -228,9 +237,30 @@ Result<std::shared_ptr<Snapshot>> SnapshotUtil::SnapshotAfter(const Table& table
       snapshot_id);
 }
 
+namespace {
+
+std::optional<int64_t> OptionalSnapshotIdAsOfTimeImpl(const TableMetadata& metadata,
+                                                      TimePointMs timestamp_ms) {
+  std::optional<int64_t> snapshot_id = std::nullopt;
+  for (const auto& log_entry : metadata.snapshot_log) {
+    if (log_entry.timestamp_ms <= timestamp_ms) {
+      snapshot_id = log_entry.snapshot_id;
+    }
+  }
+  return snapshot_id;
+}
+
+}  // namespace
+
 Result<int64_t> SnapshotUtil::SnapshotIdAsOfTime(const Table& table,
                                                  TimePointMs timestamp_ms) {
-  auto snapshot_id = OptionalSnapshotIdAsOfTime(table, timestamp_ms);
+  ICEBERG_PRECHECK(table.metadata() != nullptr, "Table metadata is null");
+  return SnapshotIdAsOfTime(*table.metadata(), timestamp_ms);
+}
+
+Result<int64_t> SnapshotUtil::SnapshotIdAsOfTime(const TableMetadata& metadata,
+                                                 TimePointMs timestamp_ms) {
+  auto snapshot_id = OptionalSnapshotIdAsOfTimeImpl(metadata, timestamp_ms);
   ICEBERG_CHECK(snapshot_id.has_value(), "Cannot find a snapshot older than {}",
                 FormatTimePointMs(timestamp_ms));
   return snapshot_id.value();
@@ -238,13 +268,7 @@ Result<int64_t> SnapshotUtil::SnapshotIdAsOfTime(const Table& table,
 
 std::optional<int64_t> SnapshotUtil::OptionalSnapshotIdAsOfTime(
     const Table& table, TimePointMs timestamp_ms) {
-  std::optional<int64_t> snapshot_id = std::nullopt;
-  for (const auto& log_entry : table.history()) {
-    if (log_entry.timestamp_ms <= timestamp_ms) {
-      snapshot_id = log_entry.snapshot_id;
-    }
-  }
-  return snapshot_id;
+  return OptionalSnapshotIdAsOfTimeImpl(*table.metadata(), timestamp_ms);
 }
 
 Result<std::shared_ptr<Schema>> SnapshotUtil::SchemaFor(const Table& table,
@@ -318,6 +342,30 @@ Result<std::shared_ptr<Snapshot>> SnapshotUtil::LatestSnapshot(
   }
 
   return metadata.SnapshotById(it->second->snapshot_id);
+}
+
+Result<std::shared_ptr<Snapshot>> SnapshotUtil::OptionalLatestSnapshot(
+    const TableMetadata& metadata, const std::string& branch) {
+  return LatestSnapshot(metadata, branch)
+      .or_else([](const auto& error) -> Result<std::shared_ptr<Snapshot>> {
+        if (error.kind == ErrorKind::kNotFound) {
+          return nullptr;
+        }
+        return std::unexpected<Error>(error);
+      });
+}
+
+int64_t SnapshotUtil::GenerateSnapshotId() {
+  auto uuid = Uuid::GenerateV7();
+  return (uuid.high_bits() ^ uuid.low_bits()) & std::numeric_limits<int64_t>::max();
+}
+
+int64_t SnapshotUtil::GenerateSnapshotId(const TableMetadata& metadata) {
+  auto snapshot_id = GenerateSnapshotId();
+  while (metadata.SnapshotById(snapshot_id).has_value()) {
+    snapshot_id = GenerateSnapshotId();
+  }
+  return snapshot_id;
 }
 
 }  // namespace iceberg

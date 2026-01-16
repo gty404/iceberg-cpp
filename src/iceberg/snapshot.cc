@@ -19,10 +19,13 @@
 
 #include "iceberg/snapshot.h"
 
+#include <memory>
+
 #include "iceberg/file_io.h"
 #include "iceberg/manifest/manifest_list.h"
 #include "iceberg/manifest/manifest_reader.h"
 #include "iceberg/util/macros.h"
+#include "iceberg/util/string_util.h"
 
 namespace iceberg {
 
@@ -39,7 +42,7 @@ bool SnapshotRef::Tag::Equals(const SnapshotRef::Tag& other) const {
 SnapshotRefType SnapshotRef::type() const noexcept {
   return std::visit(
       [&](const auto& retention) -> SnapshotRefType {
-        using T = std::decay_t<decltype(retention)>;
+        using T = std::remove_cvref_t<decltype(retention)>;
         if constexpr (std::is_same_v<T, Branch>) {
           return SnapshotRefType::kBranch;
         } else {
@@ -47,6 +50,68 @@ SnapshotRefType SnapshotRef::type() const noexcept {
         }
       },
       retention);
+}
+
+std::optional<int64_t> SnapshotRef::max_ref_age_ms() const noexcept {
+  return std::visit(
+      [&](const auto& retention) -> std::optional<int64_t> {
+        using T = std::remove_cvref_t<decltype(retention)>;
+        if constexpr (std::is_same_v<T, Branch>) {
+          return retention.max_ref_age_ms;
+        } else {
+          return retention.max_ref_age_ms;
+        }
+      },
+      retention);
+}
+
+Status SnapshotRef::Validate() const {
+  if (type() == SnapshotRefType::kBranch) {
+    const auto& branch = std::get<Branch>(this->retention);
+    ICEBERG_CHECK(!branch.min_snapshots_to_keep.has_value() ||
+                      branch.min_snapshots_to_keep.value() > 0,
+                  "Min snapshots to keep must be greater than 0");
+    ICEBERG_CHECK(
+        !branch.max_snapshot_age_ms.has_value() || branch.max_snapshot_age_ms.value() > 0,
+        "Max snapshot age must be greater than 0 ms");
+    ICEBERG_CHECK(!branch.max_ref_age_ms.has_value() || branch.max_ref_age_ms.value() > 0,
+                  "Max reference age must be greater than 0");
+  } else {
+    const auto& tag = std::get<Tag>(this->retention);
+    ICEBERG_CHECK(!tag.max_ref_age_ms.has_value() || tag.max_ref_age_ms.value() > 0,
+                  "Max reference age must be greater than 0");
+  }
+  return {};
+}
+
+Result<std::unique_ptr<SnapshotRef>> SnapshotRef::MakeBranch(
+    int64_t snapshot_id, std::optional<int32_t> min_snapshots_to_keep,
+    std::optional<int64_t> max_snapshot_age_ms, std::optional<int64_t> max_ref_age_ms) {
+  auto ref = std::make_unique<SnapshotRef>(
+      SnapshotRef{.snapshot_id = snapshot_id,
+                  .retention = Branch{
+                      .min_snapshots_to_keep = min_snapshots_to_keep,
+                      .max_snapshot_age_ms = max_snapshot_age_ms,
+                      .max_ref_age_ms = max_ref_age_ms,
+                  }});
+  ICEBERG_RETURN_UNEXPECTED(ref->Validate());
+  return ref;
+}
+
+Result<std::unique_ptr<SnapshotRef>> SnapshotRef::MakeTag(
+    int64_t snapshot_id, std::optional<int64_t> max_ref_age_ms) {
+  auto ref = std::make_unique<SnapshotRef>(SnapshotRef{
+      .snapshot_id = snapshot_id, .retention = Tag{.max_ref_age_ms = max_ref_age_ms}});
+  ICEBERG_RETURN_UNEXPECTED(ref->Validate());
+  return ref;
+}
+
+std::unique_ptr<SnapshotRef> SnapshotRef::Clone(
+    std::optional<int64_t> new_snapshot_id) const {
+  auto ref = std::make_unique<SnapshotRef>();
+  ref->snapshot_id = new_snapshot_id.value_or(snapshot_id);
+  ref->retention = retention;
+  return ref;
 }
 
 bool SnapshotRef::Equals(const SnapshotRef& other) const {
@@ -67,12 +132,30 @@ bool SnapshotRef::Equals(const SnapshotRef& other) const {
   }
 }
 
-std::optional<std::string_view> Snapshot::operation() const {
+std::optional<std::string_view> Snapshot::Operation() const {
   auto it = summary.find(SnapshotSummaryFields::kOperation);
   if (it != summary.end()) {
     return it->second;
   }
   return std::nullopt;
+}
+
+Result<std::optional<int64_t>> Snapshot::FirstRowId() const {
+  auto it = summary.find(SnapshotSummaryFields::kFirstRowId);
+  if (it == summary.end()) {
+    return std::nullopt;
+  }
+
+  return StringUtils::ParseInt<int64_t>(it->second);
+}
+
+Result<std::optional<int64_t>> Snapshot::AddedRows() const {
+  auto it = summary.find(SnapshotSummaryFields::kAddedRows);
+  if (it == summary.end()) {
+    return std::nullopt;
+  }
+
+  return StringUtils::ParseInt<int64_t>(it->second);
 }
 
 bool Snapshot::Equals(const Snapshot& other) const {
@@ -85,15 +168,46 @@ bool Snapshot::Equals(const Snapshot& other) const {
          schema_id == other.schema_id;
 }
 
-Result<CachedSnapshot::ManifestsCache> CachedSnapshot::InitManifestsCache(
-    const Snapshot& snapshot, std::shared_ptr<FileIO> file_io) {
+Result<std::unique_ptr<Snapshot>> Snapshot::Make(
+    int64_t sequence_number, int64_t snapshot_id,
+    std::optional<int64_t> parent_snapshot_id, TimePointMs timestamp_ms,
+    std::string operation, std::unordered_map<std::string, std::string> summary,
+    std::optional<int32_t> schema_id, std::string manifest_list,
+    std::optional<int64_t> first_row_id, std::optional<int64_t> added_rows) {
+  ICEBERG_PRECHECK(!operation.empty(), "Operation cannot be empty");
+  ICEBERG_PRECHECK(!first_row_id.has_value() || first_row_id.value() >= 0,
+                   "Invalid first-row-id (cannot be negative): {}", first_row_id.value());
+  ICEBERG_PRECHECK(!added_rows.has_value() || added_rows.value() >= 0,
+                   "Invalid added-rows (cannot be negative): {}", added_rows.value());
+  ICEBERG_PRECHECK(!first_row_id.has_value() || added_rows.has_value(),
+                   "Missing added-rows when first-row-id is set");
+  summary[SnapshotSummaryFields::kOperation] = operation;
+  if (first_row_id.has_value()) {
+    summary[SnapshotSummaryFields::kFirstRowId] = std::to_string(first_row_id.value());
+  }
+  if (added_rows.has_value()) {
+    summary[SnapshotSummaryFields::kAddedRows] = std::to_string(added_rows.value());
+  }
+  return std::make_unique<Snapshot>(Snapshot{
+      .snapshot_id = snapshot_id,
+      .parent_snapshot_id = parent_snapshot_id,
+      .sequence_number = sequence_number,
+      .timestamp_ms = timestamp_ms,
+      .manifest_list = std::move(manifest_list),
+      .summary = std::move(summary),
+      .schema_id = schema_id,
+  });
+}
+
+Result<SnapshotCache::ManifestsCache> SnapshotCache::InitManifestsCache(
+    const Snapshot* snapshot, std::shared_ptr<FileIO> file_io) {
   if (file_io == nullptr) {
     return InvalidArgument("Cannot cache manifests: FileIO is null");
   }
 
   // Read manifest list
   ICEBERG_ASSIGN_OR_RAISE(auto reader,
-                          ManifestListReader::Make(snapshot.manifest_list, file_io));
+                          ManifestListReader::Make(snapshot->manifest_list, file_io));
   ICEBERG_ASSIGN_OR_RAISE(auto manifest_files, reader->Files());
 
   std::vector<ManifestFile> manifests;
@@ -118,21 +232,21 @@ Result<CachedSnapshot::ManifestsCache> CachedSnapshot::InitManifestsCache(
   return std::make_pair(std::move(manifests), data_manifests_count);
 }
 
-Result<std::span<ManifestFile>> CachedSnapshot::Manifests(
+Result<std::span<ManifestFile>> SnapshotCache::Manifests(
     std::shared_ptr<FileIO> file_io) const {
   ICEBERG_ASSIGN_OR_RAISE(auto cache_ref, manifests_cache_.Get(snapshot_, file_io));
   auto& cache = cache_ref.get();
   return std::span<ManifestFile>(cache.first.data(), cache.first.size());
 }
 
-Result<std::span<ManifestFile>> CachedSnapshot::DataManifests(
+Result<std::span<ManifestFile>> SnapshotCache::DataManifests(
     std::shared_ptr<FileIO> file_io) const {
   ICEBERG_ASSIGN_OR_RAISE(auto cache_ref, manifests_cache_.Get(snapshot_, file_io));
   auto& cache = cache_ref.get();
   return std::span<ManifestFile>(cache.first.data(), cache.second);
 }
 
-Result<std::span<ManifestFile>> CachedSnapshot::DeleteManifests(
+Result<std::span<ManifestFile>> SnapshotCache::DeleteManifests(
     std::shared_ptr<FileIO> file_io) const {
   ICEBERG_ASSIGN_OR_RAISE(auto cache_ref, manifests_cache_.Get(snapshot_, file_io));
   auto& cache = cache_ref.get();

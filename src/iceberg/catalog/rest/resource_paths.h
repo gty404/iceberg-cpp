@@ -23,7 +23,6 @@
 #include <string>
 
 #include "iceberg/catalog/rest/iceberg_rest_export.h"
-#include "iceberg/catalog/rest/type_fwd.h"
 #include "iceberg/result.h"
 #include "iceberg/type_fwd.h"
 
@@ -44,10 +43,7 @@ class ICEBERG_REST_EXPORT ResourcePaths {
   static Result<std::unique_ptr<ResourcePaths>> Make(std::string base_uri,
                                                      const std::string& prefix);
 
-  /// \brief Set the base URI of the REST catalog server.
-  Status SetBaseUri(const std::string& base_uri);
-
-  /// \brief Get the /v1/{prefix}/config endpoint path.
+  /// \brief Get the /v1/config endpoint path.
   Result<std::string> Config() const;
 
   /// \brief Get the /v1/{prefix}/oauth/tokens endpoint path.

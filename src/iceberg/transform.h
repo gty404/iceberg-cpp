@@ -111,25 +111,25 @@ class ICEBERG_EXPORT Transform : public util::Formattable {
 
   /// \brief Creates a shared singleton instance of the Year transform.
   ///
-  /// Extracts the year portion from a date or timestamp.
+  /// Extracts the number of years from a date or timestamp since the epoch.
   /// \return A shared pointer to the Year transform.
   static std::shared_ptr<Transform> Year();
 
   /// \brief Creates a shared singleton instance of the Month transform.
   ///
-  /// Extracts the month portion from a date or timestamp.
+  /// Extracts the number of months from a date or timestamp since the epoch.
   /// \return A shared pointer to the Month transform.
   static std::shared_ptr<Transform> Month();
 
   /// \brief Creates a shared singleton instance of the Day transform.
   ///
-  /// Extracts the day portion from a date or timestamp.
+  /// Extracts the number of days from a date or timestamp since the epoch.
   /// \return A shared pointer to the Day transform.
   static std::shared_ptr<Transform> Day();
 
   /// \brief Creates a shared singleton instance of the Hour transform.
   ///
-  /// Extracts the hour portion from a timestamp.
+  /// Extracts the number of hours from a timestamp since the epoch.
   /// \return A shared pointer to the Hour transform.
   static std::shared_ptr<Transform> Hour();
 
@@ -193,6 +193,12 @@ class ICEBERG_EXPORT Transform : public util::Formattable {
   /// nullptr if the projection cannot be performed, or an Error if the projection fails.
   Result<std::unique_ptr<UnboundPredicate>> ProjectStrict(
       std::string_view name, const std::shared_ptr<BoundPredicate>& predicate);
+
+  /// \brief Returns a human-readable string representation of a transformed value.
+  ///
+  /// \param value The literal value to be transformed.
+  /// \return A human-readable string representation of the value
+  Result<std::string> ToHumanString(const Literal& value);
 
   /// \brief Returns a string representation of this transform (e.g., "bucket[16]").
   std::string ToString() const override;

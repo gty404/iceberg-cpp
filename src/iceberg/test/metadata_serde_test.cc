@@ -111,7 +111,7 @@ TEST(MetadataSerdeTest, DeserializeV1Valid) {
       .table_uuid = "d20125c8-7284-442c-9aea-15fee620737c",
       .location = "s3://bucket/test/location",
       .last_sequence_number = 0,
-      .last_updated_ms = TimePointMsFromUnixMs(1602638573874).value(),
+      .last_updated_ms = TimePointMsFromUnixMs(1602638573874),
       .last_column_id = 3,
       .schemas = {expected_schema},
       .current_schema_id = Schema::kInitialSchemaId,
@@ -139,12 +139,13 @@ TEST(MetadataSerdeTest, DeserializeV2Valid) {
                                            /*optional=*/false)},
       /*schema_id=*/0);
 
-  auto expected_schema_2 = std::make_shared<Schema>(
-      std::vector<SchemaField>{SchemaField::MakeRequired(1, "x", int64()),
-                               SchemaField::MakeRequired(2, "y", int64()),
-                               SchemaField::MakeRequired(3, "z", int64())},
-      /*schema_id=*/1,
-      /*identifier_field_ids=*/std::vector<int32_t>{1, 2});
+  ICEBERG_UNWRAP_OR_FAIL(
+      std::shared_ptr<Schema> expected_schema_2,
+      Schema::Make(std::vector<SchemaField>{SchemaField::MakeRequired(1, "x", int64()),
+                                            SchemaField::MakeRequired(2, "y", int64()),
+                                            SchemaField::MakeRequired(3, "z", int64())},
+                   /*schema_id=*/1,
+                   /*identifier_field_ids=*/std::vector<int32_t>{1, 2}));
 
   auto expected_spec_result = PartitionSpec::Make(
       /*spec_id=*/0,
@@ -169,7 +170,7 @@ TEST(MetadataSerdeTest, DeserializeV2Valid) {
   auto expected_snapshot_1 = std::make_shared<Snapshot>(Snapshot{
       .snapshot_id = 3051729675574597004,
       .sequence_number = 0,
-      .timestamp_ms = TimePointMsFromUnixMs(1515100955770).value(),
+      .timestamp_ms = TimePointMsFromUnixMs(1515100955770),
       .manifest_list = "s3://a/b/1.avro",
       .summary = {{"operation", "append"}},
   });
@@ -178,7 +179,7 @@ TEST(MetadataSerdeTest, DeserializeV2Valid) {
       .snapshot_id = 3055729675574597004,
       .parent_snapshot_id = 3051729675574597004,
       .sequence_number = 1,
-      .timestamp_ms = TimePointMsFromUnixMs(1555100955770).value(),
+      .timestamp_ms = TimePointMsFromUnixMs(1555100955770),
       .manifest_list = "s3://a/b/2.avro",
       .summary = {{"operation", "append"}},
       .schema_id = 1,
@@ -189,7 +190,7 @@ TEST(MetadataSerdeTest, DeserializeV2Valid) {
       .table_uuid = "9c12d441-03fe-4693-9a96-a0705ddf69c1",
       .location = "s3://bucket/test/location",
       .last_sequence_number = 34,
-      .last_updated_ms = TimePointMsFromUnixMs(1602638573590).value(),
+      .last_updated_ms = TimePointMsFromUnixMs(1602638573590),
       .last_column_id = 3,
       .schemas = {expected_schema_1, expected_schema_2},
       .current_schema_id = 1,
@@ -199,10 +200,10 @@ TEST(MetadataSerdeTest, DeserializeV2Valid) {
       .current_snapshot_id = 3055729675574597004,
       .snapshots = {expected_snapshot_1, expected_snapshot_2},
       .snapshot_log = {SnapshotLogEntry{
-                           .timestamp_ms = TimePointMsFromUnixMs(1515100955770).value(),
+                           .timestamp_ms = TimePointMsFromUnixMs(1515100955770),
                            .snapshot_id = 3051729675574597004},
                        SnapshotLogEntry{
-                           .timestamp_ms = TimePointMsFromUnixMs(1555100955770).value(),
+                           .timestamp_ms = TimePointMsFromUnixMs(1555100955770),
                            .snapshot_id = 3055729675574597004}},
       .sort_orders = {expected_sort_order},
       .default_sort_order_id = 3,
@@ -259,7 +260,7 @@ TEST(MetadataSerdeTest, DeserializeV2ValidMinimal) {
       .table_uuid = "9c12d441-03fe-4693-9a96-a0705ddf69c1",
       .location = "s3://bucket/test/location",
       .last_sequence_number = 34,
-      .last_updated_ms = TimePointMsFromUnixMs(1602638573590).value(),
+      .last_updated_ms = TimePointMsFromUnixMs(1602638573590),
       .last_column_id = 3,
       .schemas = {expected_schema},
       .current_schema_id = 0,
@@ -297,7 +298,7 @@ TEST(MetadataSerdeTest, DeserializeStatisticsFiles) {
   auto expected_snapshot = std::make_shared<Snapshot>(Snapshot{
       .snapshot_id = 3055729675574597004,
       .sequence_number = 1,
-      .timestamp_ms = TimePointMsFromUnixMs(1555100955770).value(),
+      .timestamp_ms = TimePointMsFromUnixMs(1555100955770),
       .manifest_list = "s3://a/b/2.avro",
       .summary = {{"operation", "append"}},
       .schema_id = 0,
@@ -325,7 +326,7 @@ TEST(MetadataSerdeTest, DeserializeStatisticsFiles) {
       .table_uuid = "9c12d441-03fe-4693-9a96-a0705ddf69c1",
       .location = "s3://bucket/test/location",
       .last_sequence_number = 34,
-      .last_updated_ms = TimePointMsFromUnixMs(1602638573590).value(),
+      .last_updated_ms = TimePointMsFromUnixMs(1602638573590),
       .last_column_id = 3,
       .schemas = {expected_schema},
       .current_schema_id = 0,
@@ -360,7 +361,7 @@ TEST(MetadataSerdeTest, DeserializePartitionStatisticsFiles) {
       .table_uuid = "9c12d441-03fe-4693-9a96-a0705ddf69c1",
       .location = "s3://bucket/test/location",
       .last_sequence_number = 34,
-      .last_updated_ms = TimePointMsFromUnixMs(1602638573590).value(),
+      .last_updated_ms = TimePointMsFromUnixMs(1602638573590),
       .last_column_id = 3,
       .schemas = {std::make_shared<Schema>(
           std::vector<SchemaField>{SchemaField(/*field_id=*/1, "x", int64(),
@@ -375,7 +376,7 @@ TEST(MetadataSerdeTest, DeserializePartitionStatisticsFiles) {
       .snapshots = {std::make_shared<Snapshot>(Snapshot{
           .snapshot_id = 3055729675574597004,
           .sequence_number = 1,
-          .timestamp_ms = TimePointMsFromUnixMs(1555100955770).value(),
+          .timestamp_ms = TimePointMsFromUnixMs(1555100955770),
           .manifest_list = "s3://a/b/2.avro",
           .summary = {{"operation", "append"}},
           .schema_id = 0,

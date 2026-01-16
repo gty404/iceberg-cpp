@@ -22,6 +22,7 @@
 #include <memory>
 
 #include "iceberg/catalog.h"
+#include "iceberg/location_provider.h"
 #include "iceberg/partition_spec.h"
 #include "iceberg/result.h"
 #include "iceberg/schema.h"
@@ -30,6 +31,7 @@
 #include "iceberg/table_properties.h"
 #include "iceberg/table_scan.h"
 #include "iceberg/transaction.h"
+#include "iceberg/update/expire_snapshots.h"
 #include "iceberg/update/update_partition_spec.h"
 #include "iceberg/update/update_properties.h"
 #include "iceberg/update/update_schema.h"
@@ -140,8 +142,12 @@ const std::shared_ptr<TableMetadata>& Table::metadata() const { return metadata_
 
 const std::shared_ptr<Catalog>& Table::catalog() const { return catalog_; }
 
+Result<std::unique_ptr<LocationProvider>> Table::location_provider() const {
+  return LocationProvider::Make(metadata_->location, metadata_->properties);
+}
+
 Result<std::unique_ptr<TableScanBuilder>> Table::NewScan() const {
-  return std::make_unique<TableScanBuilder>(metadata_, io_);
+  return TableScanBuilder::Make(metadata_, io_);
 }
 
 Result<std::shared_ptr<Transaction>> Table::NewTransaction() {
@@ -177,6 +183,13 @@ Result<std::shared_ptr<UpdateSchema>> Table::NewUpdateSchema() {
       auto transaction, Transaction::Make(shared_from_this(), Transaction::Kind::kUpdate,
                                           /*auto_commit=*/true));
   return transaction->NewUpdateSchema();
+}
+
+Result<std::shared_ptr<ExpireSnapshots>> Table::NewExpireSnapshots() {
+  ICEBERG_ASSIGN_OR_RAISE(
+      auto transaction, Transaction::Make(shared_from_this(), Transaction::Kind::kUpdate,
+                                          /*auto_commit=*/true));
+  return transaction->NewExpireSnapshots();
 }
 
 Result<std::shared_ptr<StagedTable>> StagedTable::Make(

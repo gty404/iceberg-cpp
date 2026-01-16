@@ -20,10 +20,14 @@
 #pragma once
 
 #include <algorithm>
+#include <charconv>
 #include <ranges>
 #include <string>
+#include <string_view>
+#include <typeinfo>
 
 #include "iceberg/iceberg_export.h"
+#include "iceberg/result.h"
 
 namespace iceberg {
 
@@ -44,6 +48,13 @@ class ICEBERG_EXPORT StringUtils {
         lhs, rhs, [](char lc, char rc) { return std::tolower(lc) == std::tolower(rc); });
   }
 
+  static bool StartsWithIgnoreCase(std::string_view str, std::string_view prefix) {
+    if (str.size() < prefix.size()) {
+      return false;
+    }
+    return EqualsIgnoreCase(str.substr(0, prefix.size()), prefix);
+  }
+
   /// \brief Count the number of code points in a UTF-8 string.
   static size_t CodePointCount(std::string_view str) {
     size_t count = 0;
@@ -53,6 +64,20 @@ class ICEBERG_EXPORT StringUtils {
       }
     }
     return count;
+  }
+
+  template <typename T>
+  static Result<T> ParseInt(std::string_view str) {
+    T value = 0;
+    auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), value);
+    if (ec == std::errc::invalid_argument) [[unlikely]] {
+      return InvalidArgument("Failed to parse integer from string '{}': invalid argument",
+                             str);
+    } else if (ec == std::errc::result_out_of_range) [[unlikely]] {
+      return InvalidArgument("Failed to parse {} from string '{}': value out of range",
+                             typeid(T).name(), str);
+    }
+    return value;
   }
 };
 

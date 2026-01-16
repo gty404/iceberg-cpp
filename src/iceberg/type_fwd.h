@@ -130,6 +130,13 @@ class Literal;
 class Term;
 class UnboundPredicate;
 
+/// \brief Evaluator.
+class Evaluator;
+class InclusiveMetricsEvaluator;
+class ManifestEvaluator;
+class ResidualEvaluator;
+class StrictMetricsEvaluator;
+
 /// \brief Scan.
 class DataTableScan;
 class FileScanTask;
@@ -144,6 +151,7 @@ struct ManifestEntry;
 struct ManifestFile;
 struct ManifestList;
 struct PartitionFieldSummary;
+class ManifestGroup;
 class ManifestListReader;
 class ManifestListWriter;
 class ManifestReader;
@@ -180,10 +188,12 @@ class Transaction;
 
 /// \brief Update family.
 class PendingUpdate;
+class SnapshotUpdate;
 class UpdatePartitionSpec;
 class UpdateProperties;
 class UpdateSchema;
 class UpdateSortOrder;
+class ExpireSnapshots;
 
 /// ----------------------------------------------------------------------------
 /// TODO: Forward declarations below are not added yet.

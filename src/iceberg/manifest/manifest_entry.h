@@ -147,9 +147,6 @@ struct ICEBERG_EXPORT DataFile {
   /// order, and should set sort order id to null. Readers must ignore sort order id for
   /// position delete files.
   std::optional<int32_t> sort_order_id;
-  /// This field is not included in spec, so it is not serialized into the manifest file.
-  /// It is just store in memory representation used in process.
-  int32_t partition_spec_id = PartitionSpec::kInitialSpecId;
   /// Field id: 142
   /// The _row_id for the first row in the data file.
   ///
@@ -177,6 +174,11 @@ struct ICEBERG_EXPORT DataFile {
   /// The length of a referenced content stored in the file; required if content_offset is
   /// present
   std::optional<int64_t> content_size_in_bytes;
+
+  /// \brief Partition spec id for this data file.
+  /// \note This field is for internal use only and will not be persisted to manifest
+  /// entry.
+  std::optional<int32_t> partition_spec_id;
 
   static constexpr int32_t kContentFieldId = 134;
   inline static const SchemaField kContent = SchemaField::MakeOptional(
@@ -308,11 +310,30 @@ struct ICEBERG_EXPORT ManifestEntry {
   /// null.
   std::optional<int64_t> snapshot_id;
   /// Field id: 3
-  /// Data sequence number of the file. Inherited when null and status is 1 (added).
+  /// Data sequence number of the file.
+  ///
+  /// Independently of the entry status, it represents the sequence number to which the
+  /// file should apply. Note the data sequence number may differ from the sequence number
+  /// of the snapshot in which the underlying file was added. New snapshots can add files
+  /// that belong to older sequence numbers (e.g. compaction). The data sequence number
+  /// also does not change when the file is marked as deleted.
+  ///
+  /// \note It can return nullopt if the data sequence number is unknown. This may happen
+  /// while reading a v2 manifest that did not persist the data sequence number for
+  /// manifest entries with status DELETED (older Iceberg versions).
   std::optional<int64_t> sequence_number;
   /// Field id: 4
-  /// File sequence number indicating when the file was added. Inherited when null and
-  /// status is 1 (added).
+  /// The file sequence number.
+  ///
+  /// The file sequence number represents the sequence number of the snapshot in which the
+  /// underlying file was added. The file sequence number is always assigned at commit and
+  /// cannot be provided explicitly, unlike the data sequence number. The file sequence
+  /// number does not change upon assigning and must be preserved in existing and deleted
+  /// entries.
+  ///
+  /// \note It can return nullopt if the file sequence number is unknown. This may happen
+  /// while reading a v2 manifest that did not persist the file sequence number for
+  /// manifest entries with status EXISTING or DELETED (older Iceberg versions).
   std::optional<int64_t> file_sequence_number;
   /// Field id: 2
   /// File path, partition tuple, metrics, ...

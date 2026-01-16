@@ -108,8 +108,8 @@ class DeleteFileIndexTest : public testing::TestWithParam<int> {
         .partition = partition,
         .record_count = 1,
         .file_size_in_bytes = 10,
-        .partition_spec_id = spec_id,
         .referenced_data_file = referenced_file,
+        .partition_spec_id = spec_id,
     });
   }
 
@@ -141,10 +141,10 @@ class DeleteFileIndexTest : public testing::TestWithParam<int> {
         .partition = partition,
         .record_count = 1,
         .file_size_in_bytes = 10,
-        .partition_spec_id = spec_id,
         .referenced_data_file = referenced_file,
         .content_offset = content_offset,
         .content_size_in_bytes = content_size,
+        .partition_spec_id = spec_id,
     });
   }
 
@@ -165,17 +165,9 @@ class DeleteFileIndexTest : public testing::TestWithParam<int> {
                                    std::shared_ptr<PartitionSpec> spec) {
     const std::string manifest_path = MakeManifestPath();
 
-    Result<std::unique_ptr<ManifestWriter>> writer_result =
-        NotSupported("Format version: {}", format_version);
-
-    if (format_version == 2) {
-      writer_result = ManifestWriter::MakeV2Writer(
-          snapshot_id, manifest_path, file_io_, spec, schema_, ManifestContent::kDeletes);
-    } else if (format_version == 3) {
-      writer_result = ManifestWriter::MakeV3Writer(
-          snapshot_id, /*first_row_id=*/std::nullopt, manifest_path, file_io_, spec,
-          schema_, ManifestContent::kDeletes);
-    }
+    auto writer_result = ManifestWriter::MakeWriter(
+        format_version, snapshot_id, manifest_path, file_io_, spec, schema_,
+        ManifestContent::kDeletes, /*first_row_id=*/std::nullopt);
 
     EXPECT_THAT(writer_result, IsOk());
     auto writer = std::move(writer_result.value());
@@ -198,9 +190,9 @@ class DeleteFileIndexTest : public testing::TestWithParam<int> {
   Result<std::unique_ptr<DeleteFileIndex>> BuildIndex(
       std::vector<ManifestFile> delete_manifests,
       std::optional<int64_t> after_sequence_number = std::nullopt) {
-    ICEBERG_ASSIGN_OR_RAISE(
-        auto builder, DeleteFileIndex::BuilderFor(file_io_, std::move(delete_manifests)));
-    builder.SpecsById(GetSpecsById()).WithSchema(schema_);
+    ICEBERG_ASSIGN_OR_RAISE(auto builder,
+                            DeleteFileIndex::BuilderFor(file_io_, schema_, GetSpecsById(),
+                                                        std::move(delete_manifests)));
     if (after_sequence_number.has_value()) {
       builder.AfterSequenceNumber(after_sequence_number.value());
     }

@@ -49,28 +49,20 @@ std::shared_ptr<Schema> CreateTestSchema() {
   return std::make_shared<Schema>(std::vector<SchemaField>{field1, field2, field3}, 0);
 }
 
-// Helper function to create a simple schema with invalid identifier fields
-std::shared_ptr<Schema> CreateInvalidSchema() {
-  auto field1 = SchemaField::MakeRequired(2, "id", int32());
-  auto field2 = SchemaField::MakeRequired(5, "part_col", string());
-  auto field3 = SchemaField::MakeRequired(8, "sort_col", timestamp());
-  return std::make_shared<Schema>(std::vector<SchemaField>{field1, field2, field3},
-                                  /*schema_id=*/1,
-                                  /*identifier_field_ids=*/std::vector<int32_t>{10});
-}
-
 // Helper function to create a simple schema with disordered field_ids
-std::shared_ptr<Schema> CreateDisorderedSchema() {
+Result<std::unique_ptr<Schema>> CreateDisorderedSchema() {
   auto field1 = SchemaField::MakeRequired(2, "id", int32());
   auto field2 = SchemaField::MakeRequired(5, "part_col", string());
   auto field3 = SchemaField::MakeRequired(8, "sort_col", timestamp());
-  return std::make_shared<Schema>(std::vector<SchemaField>{field1, field2, field3},
-                                  /*schema_id=*/1,
-                                  /*identifier_field_ids=*/std::vector<int32_t>{2});
+
+  return Schema::Make(std::vector<SchemaField>{field1, field2, field3},
+                      /*schema_id=*/1,
+                      /*identifier_field_ids=*/std::vector<int32_t>{2});
 }
 
 // Helper function to create base metadata for tests
-std::unique_ptr<TableMetadata> CreateBaseMetadata() {
+std::unique_ptr<TableMetadata> CreateBaseMetadata(
+    std::shared_ptr<PartitionSpec> spec = nullptr) {
   auto metadata = std::make_unique<TableMetadata>();
   metadata->format_version = 2;
   metadata->table_uuid = "test-uuid-1234";
@@ -80,8 +72,13 @@ std::unique_ptr<TableMetadata> CreateBaseMetadata() {
   metadata->last_column_id = 3;
   metadata->current_schema_id = 0;
   metadata->schemas.push_back(CreateTestSchema());
-  metadata->partition_specs.push_back(PartitionSpec::Unpartitioned());
-  metadata->default_spec_id = PartitionSpec::kInitialSpecId;
+  if (spec == nullptr) {
+    metadata->partition_specs.push_back(PartitionSpec::Unpartitioned());
+    metadata->default_spec_id = PartitionSpec::kInitialSpecId;
+  } else {
+    metadata->default_spec_id = spec->spec_id();
+    metadata->partition_specs.push_back(std::move(spec));
+  }
   metadata->last_partition_id = 0;
   metadata->current_snapshot_id = kInvalidSnapshotId;
   metadata->default_sort_order_id = SortOrder::kUnsortedOrderId;
@@ -95,7 +92,7 @@ std::unique_ptr<TableMetadata> CreateBaseMetadata() {
 
 // test for TableMetadata
 TEST(TableMetadataTest, Make) {
-  auto Schema = CreateDisorderedSchema();
+  ICEBERG_UNWRAP_OR_FAIL(auto Schema, CreateDisorderedSchema());
   ICEBERG_UNWRAP_OR_FAIL(
       auto spec, PartitionSpec::Make(1, std::vector<PartitionField>{PartitionField(
                                             5, 1, "part_name", Transform::Identity())}));
@@ -140,23 +137,8 @@ TEST(TableMetadataTest, Make) {
   EXPECT_EQ(NullOrder::kLast, order_fields[0].null_order());
 }
 
-TEST(TableMetadataTest, MakeWithInvalidSchema) {
-  auto schema = CreateInvalidSchema();
-  ICEBERG_UNWRAP_OR_FAIL(
-      auto spec, PartitionSpec::Make(1, std::vector<PartitionField>{PartitionField(
-                                            5, 1, "part_name", Transform::Identity())}));
-  ICEBERG_UNWRAP_OR_FAIL(
-      auto order, SortOrder::Make(1, std::vector<SortField>{SortField(
-                                         5, Transform::Identity(),
-                                         SortDirection::kAscending, NullOrder::kLast)}));
-
-  auto res = TableMetadata::Make(*schema, *spec, *order, "s3://bucket/test", {});
-  EXPECT_THAT(res, IsError(ErrorKind::kInvalidSchema));
-  EXPECT_THAT(res, HasErrorMessage("Cannot find identifier field id"));
-}
-
 TEST(TableMetadataTest, MakeWithInvalidPartitionSpec) {
-  auto schema = CreateDisorderedSchema();
+  ICEBERG_UNWRAP_OR_FAIL(auto schema, CreateDisorderedSchema());
   ICEBERG_UNWRAP_OR_FAIL(
       auto spec, PartitionSpec::Make(1, std::vector<PartitionField>{PartitionField(
                                             6, 1, "part_name", Transform::Identity())}));
@@ -171,7 +153,7 @@ TEST(TableMetadataTest, MakeWithInvalidPartitionSpec) {
 }
 
 TEST(TableMetadataTest, MakeWithInvalidSortOrder) {
-  auto schema = CreateDisorderedSchema();
+  ICEBERG_UNWRAP_OR_FAIL(auto schema, CreateDisorderedSchema());
   ICEBERG_UNWRAP_OR_FAIL(
       auto spec, PartitionSpec::Make(1, std::vector<PartitionField>{PartitionField(
                                             5, 1, "part_name", Transform::Identity())}));
@@ -191,7 +173,7 @@ TEST(TableMetadataTest, InvalidProperties) {
 
   {
     // Invalid metrics config
-    auto schema = CreateDisorderedSchema();
+    ICEBERG_UNWRAP_OR_FAIL(auto schema, CreateDisorderedSchema());
     std::unordered_map<std::string, std::string> invlaid_metric_config = {
         {std::string(TableProperties::kMetricModeColumnConfPrefix) + "unknown_col",
          "value"}};
@@ -204,7 +186,7 @@ TEST(TableMetadataTest, InvalidProperties) {
 
   {
     // Invaid commit properties
-    auto schema = CreateDisorderedSchema();
+    ICEBERG_UNWRAP_OR_FAIL(auto schema, CreateDisorderedSchema());
     std::unordered_map<std::string, std::string> invlaid_commit_properties = {
         {TableProperties::kCommitNumRetries.key(), "-1"}};
 
@@ -1149,6 +1131,125 @@ TEST(TableMetadataBuilderTest, RemoveSchemasAfterSchemaChange) {
   builder->RemoveSchemas({1});
   ASSERT_THAT(builder->Build(), IsError(ErrorKind::kValidationFailed));
   ASSERT_THAT(builder->Build(), HasErrorMessage("Cannot remove current schema: 1"));
+}
+
+TEST(TableMetadataBuilderTest, RemoveSnapshotRef) {
+  auto base = CreateBaseMetadata();
+  auto builder = TableMetadataBuilder::BuildFrom(base.get());
+
+  // Add multiple snapshots
+  builder->AddSnapshot(std::make_shared<Snapshot>(Snapshot{.snapshot_id = 1}));
+  builder->AddSnapshot(std::make_shared<Snapshot>(Snapshot{.snapshot_id = 2}));
+
+  // Add multiple refs
+  ICEBERG_UNWRAP_OR_FAIL(auto ref1, SnapshotRef::MakeBranch(1));
+  ICEBERG_UNWRAP_OR_FAIL(auto ref2, SnapshotRef::MakeBranch(2));
+  builder->SetRef("ref1", std::move(ref1));
+  builder->SetRef("ref2", std::move(ref2));
+
+  ICEBERG_UNWRAP_OR_FAIL(auto metadata, builder->Build());
+  ASSERT_EQ(metadata->refs.size(), 2);
+
+  // Remove one ref
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  builder->RemoveRef("ref2");
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->refs.size(), 1);
+  EXPECT_TRUE(metadata->refs.contains("ref1"));
+}
+
+TEST(TableMetadataBuilderTest, RemoveSnapshot) {
+  auto base = CreateBaseMetadata();
+  auto builder = TableMetadataBuilder::BuildFrom(base.get());
+
+  // Add multiple snapshots
+  builder->AddSnapshot(std::make_shared<Snapshot>(Snapshot{.snapshot_id = 1}));
+  builder->AddSnapshot(std::make_shared<Snapshot>(Snapshot{.snapshot_id = 2}));
+
+  ICEBERG_UNWRAP_OR_FAIL(auto metadata, builder->Build());
+  ASSERT_EQ(metadata->snapshots.size(), 2);
+
+  // Remove one snapshot
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  std::vector<int64_t> to_remove{2};
+  builder->RemoveSnapshots(to_remove);
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->snapshots.size(), 1);
+  ASSERT_THAT(metadata->SnapshotById(2), IsError(ErrorKind::kNotFound));
+}
+
+TEST(TableMetadataBuilderTest, RemoveSnapshotNotExist) {
+  auto base = CreateBaseMetadata();
+  auto builder = TableMetadataBuilder::BuildFrom(base.get());
+
+  // Add multiple snapshots
+  builder->AddSnapshot(std::make_shared<Snapshot>(Snapshot{.snapshot_id = 1}));
+  builder->AddSnapshot(std::make_shared<Snapshot>(Snapshot{.snapshot_id = 2}));
+
+  ICEBERG_UNWRAP_OR_FAIL(auto metadata, builder->Build());
+  ASSERT_EQ(metadata->snapshots.size(), 2);
+
+  // Remove one snapshot
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  builder->RemoveSnapshots(std::vector<int64_t>{3});
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->snapshots.size(), 2);
+
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  builder->RemoveSnapshots(std::vector<int64_t>{1, 2});
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->snapshots.size(), 0);
+}
+
+TEST(TableMetadataBuilderTest, RemovePartitionSpec) {
+  // Add multiple specs
+  PartitionField field1(2, 4, "field1", Transform::Identity());
+  PartitionField field2(3, 5, "field2", Transform::Identity());
+  ICEBERG_UNWRAP_OR_FAIL(auto spec1, PartitionSpec::Make(1, {field1}));
+
+  auto base = CreateBaseMetadata(std::move(spec1));
+  auto builder = TableMetadataBuilder::BuildFrom(base.get());
+
+  ICEBERG_UNWRAP_OR_FAIL(auto spec2, PartitionSpec::Make(2, {field1, field2}));
+  builder->AddPartitionSpec(std::move(spec2));
+
+  ICEBERG_UNWRAP_OR_FAIL(auto metadata, builder->Build());
+  ASSERT_EQ(metadata->partition_specs.size(), 2);
+
+  // Remove one spec
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  builder->RemovePartitionSpecs({2});
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->partition_specs.size(), 1);
+  ASSERT_THAT(metadata->PartitionSpecById(2), IsError(ErrorKind::kNotFound));
+}
+
+TEST(TableMetadataBuilderTest, RemovePartitionSpecNotExist) {
+  // Add multiple specs
+  PartitionField field1(2, 4, "field1", Transform::Identity());
+  PartitionField field2(3, 5, "field2", Transform::Identity());
+  ICEBERG_UNWRAP_OR_FAIL(auto spec1, PartitionSpec::Make(1, {field1}));
+
+  auto base = CreateBaseMetadata(std::move(spec1));
+  auto builder = TableMetadataBuilder::BuildFrom(base.get());
+
+  ICEBERG_UNWRAP_OR_FAIL(auto spec2, PartitionSpec::Make(2, {field1, field2}));
+  builder->AddPartitionSpec(std::move(spec2));
+
+  ICEBERG_UNWRAP_OR_FAIL(auto metadata, builder->Build());
+  ASSERT_EQ(metadata->partition_specs.size(), 2);
+
+  // Remove one non-existing spec
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  builder->RemovePartitionSpecs({3});
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->partition_specs.size(), 2);
+
+  // Remove all
+  builder = TableMetadataBuilder::BuildFrom(metadata.get());
+  builder->RemovePartitionSpecs({2, 3});
+  ICEBERG_UNWRAP_OR_FAIL(metadata, builder->Build());
+  ASSERT_EQ(metadata->partition_specs.size(), 1);
 }
 
 }  // namespace iceberg

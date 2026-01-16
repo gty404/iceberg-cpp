@@ -61,8 +61,10 @@ iceberg_sources = files(
     'file_writer.cc',
     'inheritable_metadata.cc',
     'json_internal.cc',
+    'location_provider.cc',
     'manifest/manifest_adapter.cc',
     'manifest/manifest_entry.cc',
+    'manifest/manifest_group.cc',
     'manifest/manifest_list.cc',
     'manifest/manifest_reader.cc',
     'manifest/manifest_writer.cc',
@@ -100,7 +102,9 @@ iceberg_sources = files(
     'transform.cc',
     'transform_function.cc',
     'type.cc',
+    'update/expire_snapshots.cc',
     'update/pending_update.cc',
+    'update/snapshot_update.cc',
     'update/update_partition_spec.cc',
     'update/update_properties.cc',
     'update/update_schema.cc',
@@ -115,8 +119,10 @@ iceberg_sources = files(
     'util/snapshot_util.cc',
     'util/temporal_util.cc',
     'util/timepoint.cc',
+    'util/transform_util.cc',
     'util/truncate_util.cc',
     'util/type_util.cc',
+    'util/url_encoder.cc',
     'util/uuid.cc',
 )
 
@@ -129,16 +135,9 @@ croaring_needs_static = (
 croaring_dep = dependency('croaring', static: croaring_needs_static)
 nanoarrow_dep = dependency('nanoarrow')
 nlohmann_json_dep = dependency('nlohmann_json')
-spdlog_dep = dependency('spdlog')
 zlib_dep = dependency('zlib')
 
-iceberg_deps = [
-    croaring_dep,
-    nanoarrow_dep,
-    nlohmann_json_dep,
-    spdlog_dep,
-    zlib_dep,
-]
+iceberg_deps = [croaring_dep, nanoarrow_dep, nlohmann_json_dep, zlib_dep]
 
 iceberg_lib = library(
     'iceberg',

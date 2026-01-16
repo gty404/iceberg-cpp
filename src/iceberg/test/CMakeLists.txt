@@ -49,6 +49,10 @@ function(add_iceberg_test test_name)
     target_link_libraries(${test_name} PRIVATE iceberg_static GTest::gmock_main)
   endif()
 
+  if(MSVC_TOOLCHAIN)
+    target_compile_options(${test_name} PRIVATE /bigobj)
+  endif()
+
   add_test(NAME ${test_name} COMMAND ${test_name})
 endfunction()
 
@@ -64,11 +68,13 @@ add_iceberg_test(schema_test
                  schema_util_test.cc
                  sort_field_test.cc
                  sort_order_test.cc
+                 transform_human_string_test.cc
                  transform_test.cc
                  type_test.cc)
 
 add_iceberg_test(table_test
                  SOURCES
+                 location_provider_test.cc
                  metrics_config_test.cc
                  snapshot_test.cc
                  snapshot_util_test.cc
@@ -107,7 +113,9 @@ add_iceberg_test(util_test
                  formatter_test.cc
                  location_util_test.cc
                  string_util_test.cc
+                 transform_util_test.cc
                  truncate_util_test.cc
+                 url_encoder_test.cc
                  uuid_test.cc
                  visit_type_test.cc)
 
@@ -143,6 +151,7 @@ if(ICEBERG_BUILD_BUNDLE)
                    USE_BUNDLE
                    SOURCES
                    delete_file_index_test.cc
+                   manifest_group_test.cc
                    manifest_list_versions_test.cc
                    manifest_reader_stats_test.cc
                    manifest_reader_test.cc
@@ -161,9 +170,11 @@ if(ICEBERG_BUILD_BUNDLE)
   add_iceberg_test(table_update_test
                    USE_BUNDLE
                    SOURCES
+                   expire_snapshots_test.cc
                    transaction_test.cc
                    update_partition_spec_test.cc
                    update_properties_test.cc
+                   update_schema_test.cc
                    update_sort_order_test.cc)
 
   add_iceberg_test(data_writer_test USE_BUNDLE SOURCES data_writer_test.cc)
@@ -185,6 +196,9 @@ if(ICEBERG_BUILD_REST)
     target_include_directories(${test_name} PRIVATE "${CMAKE_BINARY_DIR}/iceberg/test/")
     target_sources(${test_name} PRIVATE ${ARG_SOURCES})
     target_link_libraries(${test_name} PRIVATE GTest::gmock_main iceberg_rest_static)
+    if(MSVC_TOOLCHAIN)
+      target_compile_options(${test_name} PRIVATE /bigobj)
+    endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
   endfunction()
 

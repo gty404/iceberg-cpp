@@ -21,6 +21,7 @@
 
 #include <format>
 #include <functional>
+#include <stack>
 
 #include "iceberg/result.h"
 #include "iceberg/row/struct_like.h"
@@ -34,11 +35,27 @@
 
 namespace iceberg {
 
-Schema::Schema(std::vector<SchemaField> fields, int32_t schema_id,
-               std::vector<int32_t> identifier_field_ids)
+Schema::Schema(std::vector<SchemaField> fields, int32_t schema_id)
     : StructType(std::move(fields)),
       schema_id_(schema_id),
-      identifier_field_ids_(std::move(identifier_field_ids)) {}
+      cache_(std::make_unique<SchemaCache>(this)) {}
+
+Result<std::unique_ptr<Schema>> Schema::Make(std::vector<SchemaField> fields,
+                                             int32_t schema_id,
+                                             std::vector<int32_t> identifier_field_ids) {
+  auto schema = std::make_unique<Schema>(std::move(fields), schema_id);
+
+  if (!identifier_field_ids.empty()) {
+    auto id_to_parent = IndexParents(*schema);
+    for (auto field_id : identifier_field_ids) {
+      ICEBERG_RETURN_UNEXPECTED(
+          ValidateIdentifierFields(field_id, *schema, id_to_parent));
+    }
+  }
+
+  schema->identifier_field_ids_ = std::move(identifier_field_ids);
+  return schema;
+}
 
 Result<std::unique_ptr<Schema>> Schema::Make(
     std::vector<SchemaField> fields, int32_t schema_id,
@@ -53,8 +70,67 @@ Result<std::unique_ptr<Schema>> Schema::Make(
     }
     fresh_identifier_ids.push_back(field.value().get().field_id());
   }
+
+  if (!fresh_identifier_ids.empty()) {
+    auto id_to_parent = IndexParents(*schema);
+    for (auto field_id : fresh_identifier_ids) {
+      ICEBERG_RETURN_UNEXPECTED(
+          ValidateIdentifierFields(field_id, *schema, id_to_parent));
+    }
+  }
+
   schema->identifier_field_ids_ = std::move(fresh_identifier_ids);
   return schema;
+}
+
+Status Schema::ValidateIdentifierFields(
+    int32_t field_id, const Schema& schema,
+    const std::unordered_map<int32_t, int32_t>& id_to_parent) {
+  ICEBERG_ASSIGN_OR_RAISE(auto field_opt, schema.FindFieldById(field_id));
+  ICEBERG_PRECHECK(field_opt.has_value(),
+                   "Cannot add field {} as an identifier field: field does not exist",
+                   field_id);
+
+  const SchemaField& field = field_opt.value().get();
+  ICEBERG_PRECHECK(
+      field.type()->is_primitive(),
+      "Cannot add field {} as an identifier field: not a primitive type field", field_id);
+  ICEBERG_PRECHECK(!field.optional(),
+                   "Cannot add field {} as an identifier field: not a required field",
+                   field_id);
+  ICEBERG_PRECHECK(
+      field.type()->type_id() != TypeId::kDouble &&
+          field.type()->type_id() != TypeId::kFloat,
+      "Cannot add field {} as an identifier field: must not be float or double field",
+      field_id);
+
+  // check whether the nested field is in a chain of required struct fields
+  // exploring from root for better error message for list and map types
+  std::stack<int32_t> ancestors;
+  auto parent_it = id_to_parent.find(field.field_id());
+  while (parent_it != id_to_parent.end()) {
+    ancestors.push(parent_it->second);
+    parent_it = id_to_parent.find(parent_it->second);
+  }
+
+  while (!ancestors.empty()) {
+    ICEBERG_ASSIGN_OR_RAISE(auto parent_opt, schema.FindFieldById(ancestors.top()));
+    ICEBERG_PRECHECK(
+        parent_opt.has_value(),
+        "Cannot add field {} as an identifier field: parent field id {} does not exist",
+        field_id, ancestors.top());
+    const SchemaField& parent = parent_opt.value().get();
+    ICEBERG_PRECHECK(
+        parent.type()->type_id() == TypeId::kStruct,
+        "Cannot add field {} as an identifier field: must not be nested in {}", field_id,
+        *parent.type());
+    ICEBERG_PRECHECK(!parent.optional(),
+                     "Cannot add field {} as an identifier field: must not be nested in "
+                     "optional field {}",
+                     field_id, parent.field_id());
+    ancestors.pop();
+  }
+  return {};
 }
 
 const std::shared_ptr<Schema>& Schema::EmptySchema() {
@@ -82,14 +158,14 @@ bool Schema::Equals(const Schema& other) const {
 Result<std::optional<std::reference_wrapper<const SchemaField>>> Schema::FindFieldByName(
     std::string_view name, bool case_sensitive) const {
   if (case_sensitive) {
-    ICEBERG_ASSIGN_OR_RAISE(auto name_id_map, name_id_map_.Get(*this));
+    ICEBERG_ASSIGN_OR_RAISE(auto name_id_map, cache_->GetNameIdMap());
     auto it = name_id_map.get().name_to_id.find(name);
     if (it == name_id_map.get().name_to_id.end()) {
       return std::nullopt;
     };
     return FindFieldById(it->second);
   }
-  ICEBERG_ASSIGN_OR_RAISE(auto lowercase_name_to_id, lowercase_name_to_id_.Get(*this));
+  ICEBERG_ASSIGN_OR_RAISE(auto lowercase_name_to_id, cache_->GetLowercaseNameToIdMap());
   auto it = lowercase_name_to_id.get().find(StringUtils::ToLower(name));
   if (it == lowercase_name_to_id.get().end()) {
     return std::nullopt;
@@ -97,39 +173,9 @@ Result<std::optional<std::reference_wrapper<const SchemaField>>> Schema::FindFie
   return FindFieldById(it->second);
 }
 
-Result<std::unordered_map<int32_t, std::reference_wrapper<const SchemaField>>>
-Schema::InitIdToFieldMap(const Schema& self) {
-  std::unordered_map<int32_t, std::reference_wrapper<const SchemaField>> id_to_field;
-  IdToFieldVisitor visitor(id_to_field);
-  ICEBERG_RETURN_UNEXPECTED(VisitTypeInline(self, &visitor));
-  return id_to_field;
-}
-
-Result<Schema::NameIdMap> Schema::InitNameIdMap(const Schema& self) {
-  NameIdMap name_id_map;
-  NameToIdVisitor visitor(name_id_map.name_to_id, &name_id_map.id_to_name,
-                          /*case_sensitive=*/true);
-  ICEBERG_RETURN_UNEXPECTED(
-      VisitTypeInline(self, &visitor, /*path=*/"", /*short_path=*/""));
-  visitor.Finish();
-  return name_id_map;
-}
-
-Result<std::unordered_map<std::string, int32_t, StringHash, std::equal_to<>>>
-Schema::InitLowerCaseNameToIdMap(const Schema& self) {
-  std::unordered_map<std::string, int32_t, StringHash, std::equal_to<>>
-      lowercase_name_to_id;
-  NameToIdVisitor visitor(lowercase_name_to_id, /*id_to_name=*/nullptr,
-                          /*case_sensitive=*/false);
-  ICEBERG_RETURN_UNEXPECTED(
-      VisitTypeInline(self, &visitor, /*path=*/"", /*short_path=*/""));
-  visitor.Finish();
-  return lowercase_name_to_id;
-}
-
 Result<std::optional<std::reference_wrapper<const SchemaField>>> Schema::FindFieldById(
     int32_t field_id) const {
-  ICEBERG_ASSIGN_OR_RAISE(auto id_to_field, id_to_field_.Get(*this));
+  ICEBERG_ASSIGN_OR_RAISE(auto id_to_field, cache_->GetIdToFieldMap());
   auto it = id_to_field.get().find(field_id);
   if (it == id_to_field.get().end()) {
     return std::nullopt;
@@ -139,7 +185,7 @@ Result<std::optional<std::reference_wrapper<const SchemaField>>> Schema::FindFie
 
 Result<std::optional<std::string_view>> Schema::FindColumnNameById(
     int32_t field_id) const {
-  ICEBERG_ASSIGN_OR_RAISE(auto name_id_map, name_id_map_.Get(*this));
+  ICEBERG_ASSIGN_OR_RAISE(auto name_id_map, cache_->GetNameIdMap());
   auto it = name_id_map.get().id_to_name.find(field_id);
   if (it == name_id_map.get().id_to_name.end()) {
     return std::nullopt;
@@ -147,30 +193,9 @@ Result<std::optional<std::string_view>> Schema::FindColumnNameById(
   return it->second;
 }
 
-Result<std::unordered_map<int32_t, std::vector<size_t>>> Schema::InitIdToPositionPath(
-    const Schema& self) {
-  PositionPathVisitor visitor;
-  ICEBERG_RETURN_UNEXPECTED(VisitTypeInline(self, &visitor));
-  return visitor.Finish();
-}
-
-Result<int32_t> Schema::InitHighestFieldId(const Schema& self) {
-  ICEBERG_ASSIGN_OR_RAISE(auto id_to_field, self.id_to_field_.Get(self));
-
-  if (id_to_field.get().empty()) {
-    return kInitialColumnId;
-  }
-
-  auto max_it = std::ranges::max_element(
-      id_to_field.get(),
-      [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
-
-  return max_it->first;
-}
-
 Result<std::unique_ptr<StructLikeAccessor>> Schema::GetAccessorById(
     int32_t field_id) const {
-  ICEBERG_ASSIGN_OR_RAISE(auto id_to_position_path, id_to_position_path_.Get(*this));
+  ICEBERG_ASSIGN_OR_RAISE(auto id_to_position_path, cache_->GetIdToPositionPathMap());
   if (auto it = id_to_position_path.get().find(field_id);
       it != id_to_position_path.get().cend()) {
     ICEBERG_ASSIGN_OR_RAISE(auto field, FindFieldById(field_id));
@@ -248,7 +273,7 @@ Result<std::vector<std::string>> Schema::IdentifierFieldNames() const {
   return names;
 }
 
-Result<int32_t> Schema::HighestFieldId() const { return highest_field_id_.Get(*this); }
+Result<int32_t> Schema::HighestFieldId() const { return cache_->GetHighestFieldId(); }
 
 bool Schema::SameSchema(const Schema& other) const {
   return fields_ == other.fields_ && identifier_field_ids_ == other.identifier_field_ids_;
@@ -256,7 +281,7 @@ bool Schema::SameSchema(const Schema& other) const {
 
 Status Schema::Validate(int32_t format_version) const {
   // Get all fields including nested ones
-  ICEBERG_ASSIGN_OR_RAISE(auto id_to_field, id_to_field_.Get(*this));
+  ICEBERG_ASSIGN_OR_RAISE(auto id_to_field, cache_->GetIdToFieldMap());
 
   // Check each field's type and defaults
   for (const auto& [field_id, field_ref] : id_to_field.get()) {
@@ -275,6 +300,77 @@ Status Schema::Validate(int32_t format_version) const {
   }
 
   return {};
+}
+
+Result<SchemaCache::IdToFieldMapRef> SchemaCache::GetIdToFieldMap() const {
+  return id_to_field_.Get(schema_);
+}
+
+Result<SchemaCache::NameIdMapRef> SchemaCache::GetNameIdMap() const {
+  return name_id_map_.Get(schema_);
+}
+
+Result<SchemaCache::LowercaseNameToIdMapRef> SchemaCache::GetLowercaseNameToIdMap()
+    const {
+  return lowercase_name_to_id_.Get(schema_);
+}
+
+Result<SchemaCache::IdToPositionPathMapRef> SchemaCache::GetIdToPositionPathMap() const {
+  return id_to_position_path_.Get(schema_);
+}
+
+Result<int32_t> SchemaCache::GetHighestFieldId() const {
+  return highest_field_id_.Get(schema_);
+}
+
+Result<SchemaCache::IdToFieldMap> SchemaCache::InitIdToFieldMap(const Schema* schema) {
+  std::unordered_map<int32_t, std::reference_wrapper<const SchemaField>> id_to_field;
+  IdToFieldVisitor visitor(id_to_field);
+  ICEBERG_RETURN_UNEXPECTED(VisitTypeInline(*schema, &visitor));
+  return id_to_field;
+}
+
+Result<SchemaCache::NameIdMap> SchemaCache::InitNameIdMap(const Schema* schema) {
+  NameIdMap name_id_map;
+  NameToIdVisitor visitor(name_id_map.name_to_id, &name_id_map.id_to_name,
+                          /*case_sensitive=*/true);
+  ICEBERG_RETURN_UNEXPECTED(
+      VisitTypeInline(*schema, &visitor, /*path=*/"", /*short_path=*/""));
+  visitor.Finish();
+  return name_id_map;
+}
+
+Result<SchemaCache::LowercaseNameToIdMap> SchemaCache::InitLowerCaseNameToIdMap(
+    const Schema* schema) {
+  std::unordered_map<std::string, int32_t, StringHash, std::equal_to<>>
+      lowercase_name_to_id;
+  NameToIdVisitor visitor(lowercase_name_to_id, /*id_to_name=*/nullptr,
+                          /*case_sensitive=*/false);
+  ICEBERG_RETURN_UNEXPECTED(
+      VisitTypeInline(*schema, &visitor, /*path=*/"", /*short_path=*/""));
+  visitor.Finish();
+  return lowercase_name_to_id;
+}
+
+Result<SchemaCache::IdToPositionPathMap> SchemaCache::InitIdToPositionPath(
+    const Schema* schema) {
+  PositionPathVisitor visitor;
+  ICEBERG_RETURN_UNEXPECTED(VisitTypeInline(*schema, &visitor));
+  return visitor.Finish();
+}
+
+Result<int32_t> SchemaCache::InitHighestFieldId(const Schema* schema) {
+  ICEBERG_ASSIGN_OR_RAISE(auto id_to_field, InitIdToFieldMap(schema));
+
+  if (id_to_field.empty()) {
+    return Schema::kInitialColumnId;
+  }
+
+  auto max_it = std::ranges::max_element(
+      id_to_field,
+      [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+
+  return max_it->first;
 }
 
 }  // namespace iceberg
