@@ -1,0 +1,25 @@
+var searchData=
+[
+  ['datafile_0',['DataFile',['../structiceberg_1_1DataFile.html',1,'iceberg']]],
+  ['dataoperation_1',['DataOperation',['../structiceberg_1_1DataOperation.html',1,'iceberg']]],
+  ['datatablescan_2',['DataTableScan',['../classiceberg_1_1DataTableScan.html',1,'iceberg']]],
+  ['datawriter_3',['DataWriter',['../classiceberg_1_1DataWriter.html',1,'iceberg']]],
+  ['datawriteroptions_4',['DataWriterOptions',['../structiceberg_1_1DataWriterOptions.html',1,'iceberg']]],
+  ['datehumanstringtest_5',['DateHumanStringTest',['../classiceberg_1_1DateHumanStringTest.html',1,'iceberg']]],
+  ['dateparts_6',['DateParts',['../structiceberg_1_1DateParts.html',1,'iceberg']]],
+  ['dateprojectiontest_7',['DateProjectionTest',['../classiceberg_1_1DateProjectionTest.html',1,'iceberg']]],
+  ['datetype_8',['DateType',['../classiceberg_1_1DateType.html',1,'iceberg']]],
+  ['daytransform_9',['DayTransform',['../classiceberg_1_1DayTransform.html',1,'iceberg']]],
+  ['daytransformtest_10',['DayTransformTest',['../classiceberg_1_1DayTransformTest.html',1,'iceberg']]],
+  ['decimal_11',['Decimal',['../classiceberg_1_1Decimal.html',1,'iceberg']]],
+  ['decimaltype_12',['DecimalType',['../classiceberg_1_1DecimalType.html',1,'iceberg']]],
+  ['decodecontext_13',['DecodeContext',['../structiceberg_1_1avro_1_1DecodeContext.html',1,'iceberg::avro']]],
+  ['defaulterror_14',['DefaultError',['../structiceberg_1_1DefaultError.html',1,'iceberg']]],
+  ['defaulterrorhandler_15',['DefaultErrorHandler',['../classiceberg_1_1rest_1_1DefaultErrorHandler.html',1,'iceberg::rest']]],
+  ['defaultlocationprovider_16',['DefaultLocationProvider',['../classiceberg_1_1DefaultLocationProvider.html',1,'iceberg']]],
+  ['deletefileindex_17',['DeleteFileIndex',['../classiceberg_1_1DeleteFileIndex.html',1,'iceberg']]],
+  ['deletefileindextest_18',['DeleteFileIndexTest',['../classiceberg_1_1DeleteFileIndexTest.html',1,'iceberg']]],
+  ['dockercompose_19',['DockerCompose',['../classiceberg_1_1DockerCompose.html',1,'iceberg']]],
+  ['doubletype_20',['DoubleType',['../classiceberg_1_1DoubleType.html',1,'iceberg']]],
+  ['dropnamespaceerrorhandler_21',['DropNamespaceErrorHandler',['../classiceberg_1_1rest_1_1DropNamespaceErrorHandler.html',1,'iceberg::rest']]]
+];
