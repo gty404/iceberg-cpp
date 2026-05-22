@@ -441,6 +441,10 @@ void SnapshotSummaryBuilder::Clear() {
   metrics_.Clear();
   deleted_duplicate_files_ = 0;
   trust_partition_metrics_ = true;
+  manifests_counts_set_ = false;
+  manifests_created_ = 0;
+  manifests_kept_ = 0;
+  manifests_replaced_ = 0;
 }
 
 void SnapshotSummaryBuilder::SetPartitionSummaryLimit(int32_t max) {
@@ -475,6 +479,14 @@ void SnapshotSummaryBuilder::Set(const std::string& property, const std::string&
   properties_[property] = value;
 }
 
+void SnapshotSummaryBuilder::SetManifestCounts(int32_t created, int32_t kept,
+                                               int32_t replaced) {
+  manifests_counts_set_ = true;
+  manifests_created_ = created;
+  manifests_kept_ = kept;
+  manifests_replaced_ = replaced;
+}
+
 void SnapshotSummaryBuilder::Merge(const SnapshotSummaryBuilder& other) {
   for (const auto& [key, value] : other.properties_) {
     properties_[key] = value;
@@ -503,6 +515,16 @@ std::unordered_map<std::string, std::string> SnapshotSummaryBuilder::Build() con
 
   SetIf(deleted_duplicate_files_ > 0, builder,
         SnapshotSummaryFields::kDeletedDuplicatedFiles, deleted_duplicate_files_);
+
+  // Always emit all three manifest count fields together when they have been set,
+  // matching Java's SnapshotProducer.buildManifestCountSummary which sets them
+  // unconditionally.
+  SetIf(manifests_counts_set_, builder, SnapshotSummaryFields::kManifestsCreated,
+        manifests_created_);
+  SetIf(manifests_counts_set_, builder, SnapshotSummaryFields::kManifestsKept,
+        manifests_kept_);
+  SetIf(manifests_counts_set_, builder, SnapshotSummaryFields::kManifestsReplaced,
+        manifests_replaced_);
 
   SetIf(trust_partition_metrics_, builder,
         SnapshotSummaryFields::kChangedPartitionCountProp, partition_metrics_.size());

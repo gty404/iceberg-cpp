@@ -398,14 +398,10 @@ void SnapshotUpdate::CleanAll() {
 }
 
 Status SnapshotUpdate::DeleteFile(const std::string& path) {
-  static const auto kDefaultDeleteFunc = [this](const std::string& path) {
-    return this->ctx_->table->io()->DeleteFile(path);
-  };
   if (delete_func_) {
     return delete_func_(path);
-  } else {
-    return kDefaultDeleteFunc(path);
   }
+  return ctx_->table->io()->DeleteFile(path);
 }
 
 std::string SnapshotUpdate::ManifestListPath() {
