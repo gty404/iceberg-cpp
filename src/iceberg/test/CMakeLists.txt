@@ -128,11 +128,14 @@ add_iceberg_test(util_test
                  formatter_test.cc
                  lazy_test.cc
                  location_util_test.cc
+                 math_util_internal_test.cc
                  roaring_position_bitmap_test.cc
                  position_delete_index_test.cc
+                 position_delete_range_consumer_test.cc
                  retry_util_test.cc
                  string_util_test.cc
                  struct_like_set_test.cc
+                 temporal_util_test.cc
                  transform_util_test.cc
                  truncate_util_test.cc
                  url_encoder_test.cc
@@ -190,7 +193,9 @@ if(ICEBERG_BUILD_BUNDLE)
   add_iceberg_test(parquet_test
                    USE_BUNDLE
                    SOURCES
+                   metrics_test_base.cc
                    parquet_data_test.cc
+                   parquet_metrics_test.cc
                    parquet_schema_test.cc
                    parquet_test.cc)
 
@@ -223,9 +228,11 @@ if(ICEBERG_BUILD_BUNDLE)
   add_iceberg_test(data_test
                    USE_BUNDLE
                    SOURCES
+                   arrow_c_data_util_test.cc
                    data_writer_test.cc
                    delete_filter_test.cc
-                   delete_loader_test.cc)
+                   delete_loader_test.cc
+                   file_scan_task_reader_test.cc)
 
 endif()
 
